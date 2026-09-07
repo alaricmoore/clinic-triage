@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# clinic-triage — move clinic notes from the Taildrop inbox into sardinetracker.
+#
+# A thin wrapper over triage.py and push.py so the pipeline can be driven from
+# anywhere without remembering which flag belongs to which script. Every
+# subcommand prints the underlying command before running it, so this stays a
+# convenience rather than a layer you have to reverse-engineer later.
+#
+# See clinic-triage(1).
+
+set -euo pipefail
+
+PROJECT="${CLINIC_TRIAGE_HOME:-$HOME/projects/clinic-triage}"
+INBOX="${CLINIC_TRIAGE_INBOX:-$HOME/Downloads/taildrop}"
+
+die() { printf 'clinic-triage: %s\n' "$1" >&2; exit 1; }
+
+[ -d "$PROJECT" ] || die "no project at $PROJECT (set CLINIC_TRIAGE_HOME)"
+[ -x "$PROJECT/triage.py" ] || die "$PROJECT/triage.py is not executable"
+
+run() { printf '\033[2m$ %s\033[0m\n' "$*"; "$@"; }
+
+usage() {
+    cat <<'EOF'
+clinic-triage — clinic notes from the Taildrop inbox into sardinetracker
+
+  clinic-triage get         collect files the phone has sent
+  clinic-triage check       classify without calling the model (fast)
+  clinic-triage run         get, then describe anything new with qwen
+  clinic-triage describe    describe new documents only (no collection)
+  clinic-triage preview     show what would be filed; send nothing
+  clinic-triage push        review each proposal and file the approved ones
+  clinic-triage status      list the queue
+  clinic-triage roster      re-fetch the clinician list, then repair fields
+  clinic-triage repair      recompute dates/providers without the model
+  clinic-triage doctor      check that everything it depends on is reachable
+
+Ordinary use is:  clinic-triage run   then   clinic-triage push
+
+Nothing is sent to the server without an explicit yes at the push step.
+Full documentation: man clinic-triage
+EOF
+}
+
+cmd_get() {
+    command -v tailscale >/dev/null || die "tailscale is not installed"
+    mkdir -p "$INBOX"
+    # --conflict=rename: a file whose name already exists in the inbox is
+    # otherwise left in the Taildrop queue with an error, which reads like a
+    # problem with the target directory and is not one.
+    run tailscale file get --conflict=rename "$INBOX"
+}
+
+cmd_check()    { cd "$PROJECT"; run ./triage.py --dry-run -v "$@"; }
+cmd_describe() { cd "$PROJECT"; run ./triage.py "$@"; }
+cmd_preview()  { cd "$PROJECT"; run ./push.py --dry-run "$@"; }
+cmd_push()     { cd "$PROJECT"; run ./push.py "$@"; }
+cmd_status()   { cd "$PROJECT"; run ./triage.py --report "$@"; }
+cmd_repair()   { cd "$PROJECT"; run ./triage.py --reextract "$@"; }
+cmd_roster()   { cd "$PROJECT"; run ./triage.py --refresh-roster --reextract "$@"; }
+
+cmd_run() {
+    cmd_get
+    echo
+    cmd_describe "$@"
+    echo
+    echo "Review them, then file with:  clinic-triage push"
+}
+
+cmd_doctor() {
+    local ok=0
+    check() {  # label, command...
+        local label="$1"; shift
+        if "$@" >/dev/null 2>&1; then
+            printf '  ok    %s\n' "$label"
+        else
+            printf '  FAIL  %s\n' "$label"; ok=1
+        fi
+    }
+    echo "clinic-triage doctor"
+    check "pdftotext (poppler) installed"  command -v pdftotext
+    check "tailscale installed"            command -v tailscale
+    check "inbox exists: $INBOX"           test -d "$INBOX"
+    check "inbox is writable by you"       test -w "$INBOX"
+    check "config.json present"            test -f "$PROJECT/config.json"
+    check "ollama is answering"            curl -sf -m 5 http://127.0.0.1:11434/api/tags
+
+    # Files owned by root are the fingerprint of a past `sudo tailscale file
+    # get`, and they will fight the pipeline later.
+    if [ -d "$INBOX" ] && find "$INBOX" -maxdepth 1 ! -user "$(id -un)" -print -quit \
+         2>/dev/null | grep -q .; then
+        printf '  WARN  some files in the inbox are not owned by you\n'
+        printf '        fix: sudo chown -R %s: %s\n' "$(id -un)" "$INBOX"
+        printf '        and: sudo tailscale set --operator=$USER\n'
+    fi
+
+    if [ -f "$PROJECT/config.json" ]; then
+        local server token code
+        server=$(python3 -c "import json;print(json.load(open('$PROJECT/config.json'))['server'])" 2>/dev/null || true)
+        token=$(python3 -c "import json;print(json.load(open('$PROJECT/config.json'))['api_token'])" 2>/dev/null || true)
+        if [ -n "${server:-}" ] && [ -n "${token:-}" ]; then
+            code=$(curl -s -o /dev/null -m 15 -w '%{http_code}' \
+                   -H "Authorization: Bearer $token" \
+                   -H 'User-Agent: clinic-triage/1.0' \
+                   "$server/api/clinicians?user_id=1" || echo 000)
+            case "$code" in
+                200) printf '  ok    server reachable and token accepted\n' ;;
+                401) printf '  FAIL  server rejected the token (401)\n'; ok=1 ;;
+                403) printf '  FAIL  403 — a proxy blocked it before the app saw it\n'; ok=1 ;;
+                404) printf '  FAIL  404 — /api/clinicians not deployed yet\n'; ok=1 ;;
+                302) printf '  FAIL  302 — endpoint missing from the login whitelist\n'; ok=1 ;;
+                *)   printf '  FAIL  server returned %s\n' "$code"; ok=1 ;;
+            esac
+        fi
+    fi
+    return $ok
+}
+
+case "${1-}" in
+    get)               shift; cmd_get "$@" ;;
+    check)             shift; cmd_check "$@" ;;
+    run)               shift; cmd_run "$@" ;;
+    describe)          shift; cmd_describe "$@" ;;
+    preview)           shift; cmd_preview "$@" ;;
+    push)              shift; cmd_push "$@" ;;
+    status)            shift; cmd_status "$@" ;;
+    roster)            shift; cmd_roster "$@" ;;
+    repair)            shift; cmd_repair "$@" ;;
+    doctor)            shift; cmd_doctor "$@" ;;
+    -h|--help|help|"") usage ;;
+    *)                 die "unknown command '$1' (try: clinic-triage help)" ;;
+esac

@@ -1,0 +1,293 @@
+.TH CLINIC\-TRIAGE 1 "2026-09-07" "clinic-triage 1.0" "User Commands"
+.
+.SH NAME
+clinic\-triage \- file clinic notes from the Taildrop inbox into sardinetracker
+.
+.SH SYNOPSIS
+.B clinic\-triage
+.I command
+.RI [ options ]
+.
+.SH DESCRIPTION
+Moves clinical PDFs that a phone has sent by Taildrop into the sardinetracker
+document library, proposing a description for each one and filing only the
+descriptions you approve.
+.PP
+The work happens in four gates. A content hash decides whether the document is
+new. A structural classifier decides whether it is a clinical record. Regular
+expressions read whatever can be read directly off the page. A local language
+model, running on this machine, is then asked only for the parts that need
+judgement: a title, a document type, a specialty, and a one\- or two\-sentence
+summary.
+.PP
+Nothing reaches the server without an explicit
+.B y
+at the review step, and nothing leaves this machine before that. The
+describe step uses a model served locally by
+.BR ollama (1);
+clinic notes are not sent to a hosted service.
+.
+.SH COMMANDS
+.TP
+.B get
+Collect files the phone has sent, into the inbox. Runs
+.B tailscale file get
+with
+.BR \-\-conflict=rename .
+.TP
+.B check
+Classify and extract without calling the model. Milliseconds rather than
+minutes, and the loop to work in when adjusting the classifier.
+.TP
+.B run
+.B get
+followed by
+.BR describe .
+The ordinary entry point.
+.TP
+.B describe
+Describe documents the manifest has not seen. Roughly a minute each.
+.TP
+.B preview
+Show exactly what would be filed, field by field, and send nothing.
+.TP
+.B push
+Review each proposal and file the approved ones. Prompts
+.BR y / n / e / q
+per document;
+.B e
+opens the proposal in
+.BR $EDITOR .
+.TP
+.B status
+List what is sitting in the queue.
+.TP
+.B roster
+Re\-fetch the clinician list from the server, then recompute provider and
+facility across the queue. Run this after adding a clinician.
+.TP
+.B repair
+Recompute date, provider and facility for everything queued, leaving the
+model's fields untouched. Use after changing an extractor \(em the expensive
+half of the work is already paid for.
+.TP
+.B doctor
+Check that poppler, tailscale, the inbox, ollama and the server are all
+reachable, and that the token is accepted.
+.
+.SH THE PIPELINE
+.nf
+phone  \(-> Taildrop \(-> ~/Downloads/taildrop/
+                              |
+                              +\- hash        seen this before?
+                              +\- classify    is it a clinical record?
+                              +\- extract     date, provider, facility
+                              +\- describe    title, type, specialty, summary
+                              |
+                         queue/*.json   \(em you read these
+                              |
+                              +\- push       you approve, one at a time
+                              |
+              POST /api/clinical/document \(-> /clinical#documents
+.fi
+.PP
+Files flow one way. Nothing can pull from the phone: iOS runs no service a peer
+can reach, so every arrival is a push the phone initiates, whether by hand from
+the share sheet or by a Shortcuts automation.
+.
+.SH WHAT IS HELD BACK
+The classifier answers whether a document has the shape of a clinical record.
+It cannot answer whether you want your clinicians reading it. Four mechanisms
+cover the difference, and each writes its reason into the queue.
+.TP
+.B excluded
+Matched a filename glob in
+.IR config.json .
+Checked before anything else. Complaint drafts, briefs, letters.
+.TP
+.B not_clinical
+Tripped a veto \(em journal article, legal filing, insurance paperwork, a
+document written by the patient rather than a clinician, or a work document.
+Or it carries no patient or encounter structure at all.
+.TP
+.B not_a_record
+The model declined to type it as a clinical document. Blank intake paperwork
+lands here.
+.TP
+.B too_short , needs_ocr
+Too little text to judge, or no text layer at all. Never described, never sent.
+.PP
+Documents the patient wrote are the awkward case: they are about clinical
+findings, they use clinical vocabulary, and they score as records. One was
+typed by the model as a clinic note with a summary in a clinician's voice. That
+is the version of the mistake that survives review, so it has a rule of its
+own rather than relying on the classifier.
+.
+.SH FIELDS AND WHERE THEY COME FROM
+Every proposal records the provenance of each field, so a wrong value can be
+traced to the thing that produced it.
+.TP
+.B date
+A labelled date in the text \(em
+.IR collected ,
+.I date of service
+\(em otherwise the filename. There is deliberately no "earliest date in the
+document" fallback: it returned a date of birth as the date of service. If the
+filename's date appears nowhere in the document the field is marked
+.BR "NOT corroborated" .
+.TP
+.B provider , facility
+The clinician roster first, then a labelled field validated to look like a
+name. Both return nothing rather than a plausible fragment; a wrong provider is
+worse than a blank one in a record shown to clinicians.
+.TP
+.B title , doc_type , specialty , summary
+The model. It is instructed to use the document's own wording for any finding
+and to return nothing rather than invent. Patient identifiers are then stripped
+from its output regardless of what it was told, because an instruction is not
+a control.
+.
+.SH FILES
+.TP
+.I ~/projects/clinic-triage/config.json
+Server, API token, patient names to scrub, exclusion globs. Not in version
+control.
+.TP
+.I ~/projects/clinic-triage/state/manifest.json
+Content hash of every document seen, and its verdict. Delete an entry to make
+one document new again; delete the file to re\-triage everything.
+.TP
+.I ~/projects/clinic-triage/state/clinicians.json
+Cached clinician roster. Refreshed by
+.BR "clinic\-triage roster" .
+.TP
+.I ~/projects/clinic-triage/queue/
+One proposal per document, awaiting review.
+.TP
+.I ~/projects/clinic-triage/filed/
+Proposals already filed, with the server's response recorded.
+.TP
+.I ~/Downloads/taildrop/
+The inbox.
+.
+.SH ENVIRONMENT
+.TP
+.B CLINIC_TRIAGE_HOME
+Project directory. Default
+.IR ~/projects/clinic-triage .
+.TP
+.B CLINIC_TRIAGE_INBOX
+Inbox directory. Default
+.IR ~/Downloads/taildrop .
+.TP
+.B EDITOR
+Used by
+.B push
+when you answer
+.BR e .
+.
+.SH TROUBLESHOOTING
+.TP
+.B "403 Forbidden"
+A proxy, not your token. Cloudflare rejects the default
+.B Python\-urllib/3.x
+User\-Agent before the request reaches the application, so it looks like an
+auth failure and is not one. Both clients send a real User\-Agent. If you see
+this from your own
+.BR curl (1),
+add one.
+.TP
+.B "302 to /login"
+The endpoint is missing from the application's
+.B require_login
+whitelist. A token\-authenticated route that is not listed there redirects
+instead of running, and nothing errors.
+.TP
+.B "401 unauthorized"
+This one really is the token. Compare
+.I api_token
+in
+.I config.json
+against the server's.
+.TP
+.B "Access denied: file access denied"
+.B tailscale file get
+cannot reach the daemon as you. Fix it once with
+.PP
+.RS 7
+.nf
+sudo tailscale set \-\-operator=$USER
+.fi
+.RE
+.IP
+rather than running it under
+.BR sudo (8),
+which leaves every collected file owned by root.
+.TP
+.B "an error naming the target directory"
+A file of that name is already in the inbox. Taildrop's default is to skip
+conflicts, leave the file in its queue and print an error. Nothing is lost \(em
+.B clinic\-triage get
+passes
+.B \-\-conflict=rename
+for this reason.
+.TP
+.B "another triage is running"
+Two runs share a manifest and a queue, and the second overwrites the first,
+including replacing finished descriptions with un\-described ones. The message
+names the process; if it is genuinely dead, remove
+.IR state/triage.lock .
+.
+.SH CAVEATS
+Filing is idempotent \(em the server rejects a duplicate by content hash, so a
+retry after a dropped connection is safe. But there is no update path: once a
+document is filed, its metadata can only be changed in the web interface. File
+two or three and look at the result before committing to a large batch.
+.PP
+Extraction and classification were tuned against one person's inbox. The
+structural rules should generalise; the veto thresholds are calibrated to that
+corpus and would want re\-measuring elsewhere.
+.
+.SH EXAMPLES
+Ordinary use:
+.PP
+.RS 4
+.nf
+clinic\-triage run
+clinic\-triage push
+.fi
+.RE
+.PP
+Check what a new batch would be classified as, without spending model time:
+.PP
+.RS 4
+.nf
+clinic\-triage get
+clinic\-triage check
+.fi
+.RE
+.PP
+After adding a clinician to the record:
+.PP
+.RS 4
+.nf
+clinic\-triage roster
+.fi
+.RE
+.PP
+File a single document by the start of its hash:
+.PP
+.RS 4
+.nf
+clinic\-triage push \-\-only f84e7312
+.fi
+.RE
+.
+.SH SEE ALSO
+.BR sardinetracker (7),
+.BR tailscale (1),
+.BR pdftotext (1),
+.BR ollama (1)
+.PP
+The project README carries the reasoning behind the classifier and the
+extractors, including the failures each rule was written against.

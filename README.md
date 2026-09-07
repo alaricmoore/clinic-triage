@@ -232,6 +232,26 @@ Recomputes `date`, `provider` and `facility` for everything already in the
 queue and leaves the model's fields untouched. Use it after changing an
 extractor — the expensive half of the work is already paid for.
 
+## Install
+
+```bash
+./install.sh          # symlinks clinic-triage onto PATH and its man page
+man clinic-triage     # steps, commands, troubleshooting
+clinic-triage doctor  # check poppler, tailscale, ollama, the inbox, the server
+```
+
+`clinic-triage` wraps the two scripts so the pipeline can be driven from
+anywhere. It echoes the underlying command before running it, so it stays a
+convenience rather than something to reverse-engineer later.
+
+```
+clinic-triage run     # collect from Taildrop, then describe what is new
+clinic-triage push    # review each proposal and file the approved ones
+```
+
+Everything else — `get`, `check`, `describe`, `preview`, `status`, `roster`,
+`repair`, `doctor` — is in the man page.
+
 ## Stage 3 — push.py
 
 ```bash
