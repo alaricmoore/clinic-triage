@@ -251,10 +251,15 @@ extractor — the expensive half of the work is already paid for.
 ## Install
 
 ```bash
-./install.sh          # symlinks clinic-triage onto PATH and its man page
-man clinic-triage     # steps, commands, troubleshooting
-clinic-triage doctor  # check poppler, tailscale, ollama, the inbox, the server
+./install.sh                        # symlinks clinic-triage onto PATH and its man page
+cp config.json.example config.json  # then fill in server, api_token, user_id
+man clinic-triage                   # steps, commands, troubleshooting
+clinic-triage doctor                # poppler, tailscale, ollama, inbox, server
 ```
+
+`install.sh` symlinks rather than copies, so a `git pull` updates both the
+command and its man page. `config.json` is gitignored — it holds your token and
+the patient names the describer scrubs out of model output.
 
 `clinic-triage` wraps the two scripts so the pipeline can be driven from
 anywhere. It echoes the underlying command before running it, so it stays a
