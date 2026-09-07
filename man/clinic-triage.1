@@ -240,9 +240,17 @@ names the process; if it is genuinely dead, remove
 .
 .SH CAVEATS
 Filing is idempotent \(em the server rejects a duplicate by content hash, so a
-retry after a dropped connection is safe. But there is no update path: once a
-document is filed, its metadata can only be changed in the web interface. File
-two or three and look at the result before committing to a large batch.
+retry after a dropped connection is safe.
+.PP
+If a document is already filed and the proposal describes it differently,
+.B push
+shows the difference and offers to correct the filed copy. Only fields the
+proposal actually has are offered: one with no provider means "could not
+determine one", so it will not blank a value entered by hand.
+.B \-\-yes
+does not overwrite;
+.B \-\-update\-duplicates
+applies changes without asking.
 .PP
 Extraction and classification were tuned against one person's inbox. The
 structural rules should generalise; the veto thresholds are calibrated to that

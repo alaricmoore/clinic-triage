@@ -14,6 +14,12 @@ Nothing is sent without a 'y'. The server dedupes on the file's sha256, so a
 retry after a dropped connection files nothing twice - which is what makes
 --yes safe to re-run.
 
+When a document is already filed and this proposal describes it differently,
+push shows the difference field by field and offers to correct the filed copy.
+Only fields the proposal actually has are offered: a proposal with no provider
+means "could not determine one", so it will not blank a provider you typed in
+by hand.
+
 Config lives in config.json next to this file (see config.json.example).
 Only stdlib.
 """
@@ -82,9 +88,11 @@ def encode_multipart(fields, file_field, filename, blob):
     return f"multipart/form-data; boundary={boundary}", bytes(out)
 
 
-def post_document(cfg, prop, blob):
+def post_document(cfg, prop, blob, on_duplicate=None):
     fields = {k: prop["fields"].get(k) for k in SEND_FIELDS}
     fields["user_id"] = cfg["user_id"]
+    if on_duplicate:
+        fields["on_duplicate"] = on_duplicate
     ctype, body = encode_multipart(
         fields, "pdf_file", prop["source_file"], blob)
     req = urllib.request.Request(
@@ -132,6 +140,29 @@ def show(prop):
         while rest:
             print(f"    {'':<10} {rest[:64]}")
             rest = rest[64:]
+
+
+def diff_against_filed(prop, stored):
+    """Fields where this proposal differs from what is already filed.
+
+    Only fields the proposal actually has count. A proposal with no provider
+    means "I could not determine one", not "there is no provider" — treating it
+    as the latter would blank a value entered by hand in the web interface.
+    """
+    out = []
+    for k in SEND_FIELDS:
+        new = (prop["fields"].get(k) or "").strip() if prop["fields"].get(k) else ""
+        old = (stored.get(k) or "").strip() if stored.get(k) else ""
+        if new and new != old:
+            out.append((k, old, new))
+    return out
+
+
+def show_diff(rows):
+    for k, old, new in rows:
+        print(f"    {k}")
+        print(f"      filed    {old or '--'}")
+        print(f"      proposed {new}")
 
 
 def edit(path):
@@ -183,6 +214,9 @@ def main():
     ap.add_argument("--yes", action="store_true",
                     help="no prompts; file every pending proposal")
     ap.add_argument("--only", help="only the proposal whose sha256 starts with this")
+    ap.add_argument("--update-duplicates", action="store_true",
+                    help="when a document is already filed and the proposal "
+                         "differs, apply the change without asking")
     ap.add_argument("--config", help="use a different config.json (for testing)")
     a = ap.parse_args()
 
@@ -251,15 +285,47 @@ def main():
             continue
 
         status, body = post_document(cfg, prop, blob)
-        if status in (200, 201) and body.get("ok"):
-            where = "already filed" if body.get("duplicate") else "filed"
-            print(f"  {where} as #{body['id']}  "
-                  f"{cfg['server']}/clinical#documents")
-            mark_filed(path, prop, {"status": status, **body})
-            filed += 1
-        else:
+        if not (status in (200, 201) and body.get("ok")):
             print(f"  FAILED  {status}  {body}")
             failed += 1
+            continue
+
+        if body.get("duplicate"):
+            rows = diff_against_filed(prop, body.get("document") or {})
+            if not rows:
+                print(f"  already filed as #{body['id']}, nothing to change")
+                mark_filed(path, prop, {"status": status, **body})
+                filed += 1
+                continue
+            print(f"  already filed as #{body['id']}, and this differs:")
+            show_diff(rows)
+            if a.update_duplicates:
+                do_update = True
+            elif a.yes:
+                do_update = False
+                print("  left as filed (--yes does not overwrite; "
+                      "use --update-duplicates)")
+            else:
+                try:
+                    do_update = input("\n  update the filed copy? [y/N]  "
+                                      ).strip().lower() in ("y", "yes")
+                except EOFError:
+                    do_update = False
+            if not do_update:
+                print("  left as filed.")
+                skipped += 1
+                continue
+            status, body = post_document(cfg, prop, blob, on_duplicate="update")
+            if not (status in (200, 201) and body.get("ok")):
+                print(f"  FAILED  {status}  {body}")
+                failed += 1
+                continue
+            print(f"  updated #{body['id']}: {', '.join(body.get('changed') or [])}")
+        else:
+            print(f"  filed as #{body['id']}  "
+                  f"{cfg['server']}/clinical#documents")
+        mark_filed(path, prop, {"status": status, **body})
+        filed += 1
 
     print(f"\n{filed} filed, {skipped} skipped, {failed} failed.")
 

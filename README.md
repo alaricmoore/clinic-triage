@@ -269,6 +269,22 @@ recorded in them, so the queue only ever shows what is still outstanding.
 The `api_token` is the same one `/api/health-sync` uses — the value in the Pi's
 `config.json`, which is also what you type into SardinesSync's settings.
 
+When a document is already filed and the proposal describes it differently,
+push shows the difference field by field and offers to correct the filed copy:
+
+```
+  already filed as #12, and this differs:
+    date
+      filed    2026-01-11
+      proposed 2026-01-14
+  update the filed copy? [y/N]
+```
+
+Only fields the proposal actually has are offered. A proposal with no provider
+means "could not determine one", not "there is no provider" — it will never
+blank a value you typed into the web interface. `--yes` deliberately does *not*
+overwrite; `--update-duplicates` is the flag that says do it without asking.
+
 **Two safety properties worth knowing.** push.py re-hashes the PDF before
 sending and refuses if it no longer matches the proposal, because a replaced
 file would otherwise be filed under a description written for different bytes.
