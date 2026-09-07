@@ -1,0 +1,14 @@
+# Live config — contains the API token and the patient names to scrub.
+config.json
+
+# Everything derived from real documents. state/ holds the hash manifest and
+# the clinician roster; queue/ and filed/ hold proposed descriptions of clinic
+# notes. All of it is health data and none of it belongs in version control.
+state/
+queue/
+filed/
+
+*.log
+__pycache__/
+*.pyc
+*.pyo
