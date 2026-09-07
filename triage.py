@@ -20,6 +20,7 @@ Only stdlib. Requires `pdftotext` (poppler) and, unless --dry-run, `ollama serve
 """
 
 import argparse
+import fnmatch
 import hashlib
 import json
 import os
@@ -46,6 +47,14 @@ MANIFEST = os.path.join(STATE_DIR, "manifest.json")
 DEFAULT_INBOX = os.path.expanduser("~/Downloads/taildrop")
 
 
+def _config():
+    try:
+        with open(os.path.join(HERE, "config.json")) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
 def _known_names():
     """Patient names to scrub from model output, from config.json."""
     path = os.path.join(HERE, "config.json")
@@ -57,6 +66,23 @@ def _known_names():
 
 
 KNOWN_NAMES = _known_names()
+
+# Filename patterns that must never be filed, whatever the classifier decides.
+# The classifier answers "is this a clinical record?"; this answers "do I want
+# this in a record my clinicians can read?", which is a different question and
+# not one a heuristic should be guessing at. Self-authored advocacy documents
+# are the case in point: a case brief written by the patient scores as a
+# clinical record, and the model typed one as a "clinic note" with a summary in
+# a clinician's voice.
+EXCLUDE_PATTERNS = tuple(_config().get("exclude") or ())
+
+
+def is_excluded(name):
+    low = name.lower()
+    for pat in EXCLUDE_PATTERNS:
+        if fnmatch.fnmatch(low, pat.lower()):
+            return pat
+    return None
 ROSTER = []          # populated in main() from state/clinicians.json
 
 
@@ -100,6 +126,17 @@ VETOES = {
                         r"\bcounsel\b|respectfully\s+submit", 5),
     "insurance_admin": (r"enrollment|premium|subscriber|member\s+id|deductible|"
                         r"policy\s+number|coverage", 10),
+    # Written by the patient, not a clinician. A physician's note also uses
+    # "I" ("I examined...", "I recommend..."), so the signal is patient-voice
+    # possessives and requests, not first person as such. Catches self-authored
+    # advocacy that otherwise scores as a clinical record - a case brief, or a
+    # lab request opening "I have a history of systemic symptoms".
+    "self_authored":   (r"\bI have (?:a |an )?(?:history|hx)\b|"
+                        r"\bI would like to (?:pursue|request|discuss|ask)\b|"
+                        r"\bI am (?:requesting|asking|writing)\b|"
+                        r"\bmy (?:symptoms|labs|rheumatologist|dermatologist|"
+                        r"diagnosis|records|chart|providers)\b|"
+                        r"\bplease (?:consider|order|add)\b", 2),
     "work_document":   (r"incident\s+number|work\s+order|site\s+name|"
                         r"down\s*(?:time|hrs)|equipment\s+status|\bMTSC\b", 2),
 }
@@ -385,6 +422,12 @@ def extract_provider(text):
 # name off a letterhead - and clinic_name fills the facility field, which the
 # letterhead heuristic almost never found.
 
+# Cloudflare sits in front of your-server.example.com and blocks requests
+# carrying urllib's default "Python-urllib/3.x" User-Agent with a 403 — which
+# reads like an auth failure but happens before the request reaches Flask. Any
+# non-default UA is accepted.
+USER_AGENT = "clinic-triage/1.0"
+
 ROSTER_CACHE = os.path.join(STATE_DIR, "clinicians.json")
 
 # A clinician surname can also be an ordinary word
@@ -408,8 +451,9 @@ def fetch_roster(cfg, timeout=20):
     """GET the clinician roster from the server and cache it."""
     url = (cfg["server"].rstrip("/") + "/api/clinicians?user_id="
            + str(cfg["user_id"]))
-    req = urllib.request.Request(
-        url, headers={"Authorization": "Bearer " + cfg["api_token"]})
+    req = urllib.request.Request(url, headers={
+        "Authorization": "Bearer " + cfg["api_token"],
+        "User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         data = json.loads(r.read())
     roster = data.get("clinicians") or []
@@ -466,7 +510,7 @@ def match_clinician(text, filename, roster):
     visit to the primary care doctor, because each one says to follow up with
     him. So only the head, the signature block, and the filename count.
     """
-    # Mercy's exports open with a patient banner:
+    # Some portal exports open with a patient banner:
     #   Name: ... | DOB: ... | MRN: ... | PCP: A. Physician, MD | ...
     # That is the patient's primary care doctor, not the author of the note, and
     # it appears on page one of every ER visit, urgent care note and telehealth
@@ -555,6 +599,14 @@ def extract_facility(text):
 DOC_TYPES = ["clinic note", "pathology report", "lab report", "imaging report",
              "operative report", "discharge summary", "referral letter",
              "procedure note", "other"]
+
+# Types that belong in the document library. "other" stays on the list above so
+# the model can say "I don't recognise this" instead of being forced to guess -
+# and that answer is then treated as a reason to hold the document back, not as
+# a type. Intake paperwork and blank forms land here.
+FILEABLE_DOC_TYPES = {"clinic note", "pathology report", "lab report",
+                      "imaging report", "operative report",
+                      "discharge summary", "referral letter", "procedure note"}
 
 SPECIALTIES = ["rheumatology", "dermatology", "cardiology", "neurology",
                "primary care", "pathology", "hematology", "nephrology",
@@ -834,6 +886,12 @@ def triage_one(path, model, dry_run):
         "status": "pending", "fields": {}, "field_sources": {},
     }
 
+    pat = is_excluded(name)
+    if pat:
+        prop["status"] = "excluded"
+        prop["note"] = f"excluded by config.json pattern {pat!r}"
+        return prop
+
     text = extract_text(path)
     if not text:
         prop["status"] = "needs_ocr"
@@ -871,6 +929,12 @@ def triage_one(path, model, dry_run):
         prop["field_sources"][k] = f"model ({model})"
     for k in scrub_identifiers(prop["fields"], text, KNOWN_NAMES):
         prop["field_sources"][k] = f"model ({model}), patient name removed"
+    if (prop["fields"].get("doc_type") or "other") not in FILEABLE_DOC_TYPES:
+        prop["status"] = "not_a_record"
+        prop["note"] = ("the model could not type this as a clinical document; "
+                        "held back for review")
+        return prop
+
     prop["status"] = "described" if verdict == "clinical" else "described_ambiguous"
     return prop
 
@@ -978,7 +1042,8 @@ def reextract():
 
 STATUS_MARK = {
     "described": "+", "described_ambiguous": "?", "extracted": "+",
-    "not_clinical": "-", "too_short": "-", "needs_ocr": "!",
+    "not_clinical": "-", "too_short": "-", "excluded": "x", "needs_ocr": "!",
+    "not_a_record": "?",
     "describe_failed": "!",
 }
 
@@ -1113,7 +1178,9 @@ def _run(a):
             break
         prop = triage_one(path, a.model, a.dry_run)
         show(prop, a.verbose)
-        if prop["status"] not in ("not_clinical", "too_short"):
+        if prop["status"] not in ("not_clinical", "too_short", "excluded"):
+            # not_a_record still writes a proposal - it is a judgement call the
+            # reviewer may want to overturn, unlike a veto.
             write_proposal(prop)
         manifest[digest] = {
             "source_file": prop["source_file"], "first_seen": now(),

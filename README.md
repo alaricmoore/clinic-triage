@@ -93,6 +93,66 @@ On the real inbox this yields 36 clinical, 2 ambiguous, 22 not clinical,
 
 Run `--dry-run -v` to see the anchor and veto counts behind any single call.
 
+## What is a record, and what is merely about one
+
+The classifier answers "does this have the shape of a clinical record?". It
+cannot answer "do I want my clinicians reading this?", which is a different
+question and not one a heuristic should decide. Three mechanisms cover the gap.
+
+**An `exclude` list in config.json** — filename globs, checked before anything
+else, before hashing or the model. Explicit, auditable, and yours:
+
+```json
+"exclude": ["*complaint*", "*case_brief*", "*draft*"]
+```
+
+**A `self_authored` veto.** Documents the patient wrote score as clinical
+records — they are *about* clinical findings and use the same vocabulary. One
+was typed by the model as a `clinic note` with a summary in a clinician's
+voice, which is the version of this mistake that survives review. The signal is
+patient-voice phrasing (`I have a history`, `my symptoms`, `I would like to
+request`), deliberately **not** first person as such: physicians write "I
+examined", "I recommend" constantly. Across 69 documents it fires on one and
+touches none of the clinic notes.
+
+**A fileable-type allowlist.** `other` stays among the types offered to the
+model so it can say "I don't recognise this" rather than guess — and that answer
+holds the document back instead of counting as a type. Blank intake paperwork
+lands here.
+
+The exclude list deletes outright, being an explicit instruction. The other two
+write a proposal marked `not_clinical` or `not_a_record`, so a withheld document
+is visible and reversible rather than silently absent.
+
+## The clinician roster
+
+`--refresh-roster` pulls the roster from `GET /api/clinicians` and caches it in
+`state/`. Matching a known roster is deterministic where reading a name off a
+letterhead is not, and `clinic_name` fills the facility field that the
+letterhead heuristic rarely finds.
+
+Two rules keep it honest:
+
+**Position.** A document's own clinician appears in the header, the letterhead
+or the signature block. One merely *referenced* appears in the body ("follow up
+with Dr Example"). Matching anywhere attributed both ER visits, an urgent care
+note and a telehealth visit to the primary care doctor, because each says to
+follow up with him.
+
+**Referenced-role redaction.** Portal exports open with a patient banner —
+`Name: ... | DOB: ... | MRN: ... | PCP: A. Physician, MD` — naming the patient's
+primary care doctor on page one of every document from that system. `PCP:`,
+`Primary Care Provider:`, `Referring:`, pharmacy and emergency-contact fields
+are blanked before any matching happens.
+
+A match on the *filename* overrides the regex, because these files are named for
+the clinician seen: a cardiology consult was being attributed to the PCP named
+in its banner until the filename won.
+
+Surnames that are ordinary words (`Standard`, `Grant`, `Young`) only match when
+anchored to a title, credentials, or the filename — otherwise "standard of care"
+is a match.
+
 ## Why `pdftotext -layout`
 
 Not cosmetic. Without it the two-column header linearises and the labels
@@ -211,6 +271,14 @@ dropped connection.
 `--dry-run` needs no Ollama and takes milliseconds. It is the loop to work in
 while adjusting signal weights; only spend the 90 seconds once the classification
 is right.
+
+## A note on Cloudflare
+
+If the server sits behind Cloudflare, it answers urllib's default
+`Python-urllib/3.x` User-Agent with **403 Forbidden** — before the request
+reaches the application, so it reads like an auth failure and is not one. Both
+clients send a real User-Agent for this reason. A 403 where you expected 401 is
+the proxy, not your token.
 
 ## Requirements
 

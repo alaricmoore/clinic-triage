@@ -1,9 +1,14 @@
 {
   "server": "https://your-server.example.com",
-  "api_token": "the api_token value from the Pi's config.json",
+  "api_token": "the api_token value from the server's config.json",
   "user_id": 1,
   "patient_names": [
     "Firstname Lastname",
     "Any Other Name On Your Records"
+  ],
+  "exclude": [
+    "*complaint*",
+    "*case_brief*",
+    "*draft*"
   ]
 }

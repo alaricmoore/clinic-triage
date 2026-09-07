@@ -37,6 +37,13 @@ CONFIG_PATH = os.path.join(HERE, "config.json")
 SEND_FIELDS = ("date", "title", "doc_type", "specialty", "provider",
                "facility", "summary")
 
+# Cloudflare sits in front of your-server.example.com and blocks requests
+# carrying urllib's default "Python-urllib/3.x" User-Agent with a 403 — which
+# reads like an auth failure but happens before the request reaches Flask. Any
+# non-default UA is accepted.
+USER_AGENT = "clinic-triage/1.0"
+
+
 
 def load_config(path=None):
     CONFIG_PATH = path or globals()["CONFIG_PATH"]
@@ -83,7 +90,8 @@ def post_document(cfg, prop, blob):
     req = urllib.request.Request(
         cfg["server"] + "/api/clinical/document", data=body, method="POST",
         headers={"Content-Type": ctype,
-                 "Authorization": "Bearer " + cfg["api_token"]})
+                 "Authorization": "Bearer " + cfg["api_token"],
+                 "User-Agent": USER_AGENT})
     try:
         with urllib.request.urlopen(req, timeout=120) as r:
             return r.status, json.loads(r.read())
@@ -198,7 +206,8 @@ def main():
         with open(path) as fh:
             prop = json.load(fh)
 
-        if prop["status"] in ("not_clinical", "needs_ocr", "too_short"):
+        if prop["status"] in ("not_clinical", "needs_ocr", "too_short",
+                              "excluded", "not_a_record"):
             print(f"\n  {prop['source_file']}: {prop['status']} — not filing.")
             skipped += 1
             continue
