@@ -27,6 +27,22 @@ Taildrop inbox are clinical records, and proposes a description for each one.
 `push.py` is the only thing here that talks to the server, and it sends nothing
 without a `y`.
 
+## Who this is for
+
+A companion to [sardinetracker](https://your-server.example.com), not a part of
+it. It is useful on its own if you already run the pieces it leans on: a machine
+that receives your own scanned records, a local model to describe them, and
+somewhere to file them. Swap the `push.py` target and the first three gates work
+against any document store.
+
+Nothing here leaves your machine except the final POST, and that one waits for a
+`y`. The classifier, the date and provider regexes, and the model prompt all run
+locally; no document text is sent anywhere to decide what it is.
+
+**Your records are health data.** `state/`, `queue/`, `filed/`, and your real
+`config.json` hold document text, clinician names, and an API token. They are
+gitignored for that reason — if you fork this, keep them that way.
+
 ## Why the gates are in that order
 
 Hashing is free, so it goes first: a re-sent file costs nothing at all. The
@@ -318,7 +334,7 @@ the proxy, not your token.
 
 ## Requirements
 
-- `pdftotext` (poppler) — present on this machine
+- `pdftotext` (poppler)
 - `ollama serve` with `qwen-local` — only for the describe step
 - stdlib Python only, no venv
 
@@ -342,3 +358,7 @@ the proxy, not your token.
   the server sees a known hash and returns `duplicate: true`. Correct default
   (an idempotent create should not silently rewrite the record), but there is no
   update path yet. Editing the document in the web UI is the workaround.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
