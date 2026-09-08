@@ -422,8 +422,8 @@ def extract_provider(text):
 # name off a letterhead - and clinic_name fills the facility field, which the
 # letterhead heuristic almost never found.
 
-# Cloudflare sits in front of your-server.example.com and blocks requests
-# carrying urllib's default "Python-urllib/3.x" User-Agent with a 403 — which
+# If Cloudflare sits in front of the server, it blocks requests carrying
+# urllib's default "Python-urllib/3.x" User-Agent with a 403 — which
 # reads like an auth failure but happens before the request reaches Flask. Any
 # non-default UA is accepted.
 USER_AGENT = "clinic-triage/1.0"

@@ -29,11 +29,10 @@ without a `y`.
 
 ## Who this is for
 
-A companion to [sardinetracker](https://your-server.example.com), not a part of
-it. It is useful on its own if you already run the pieces it leans on: a machine
-that receives your own scanned records, a local model to describe them, and
-somewhere to file them. Swap the `push.py` target and the first three gates work
-against any document store.
+A companion to sardinetracker, not a part of it. It is useful on its own if you
+already run the pieces it leans on: a machine that receives your own scanned
+records, a local model to describe them, and somewhere to file them. Swap the
+`push.py` target and the first three gates work against any document store.
 
 Nothing here leaves your machine except the final POST, and that one waits for a
 `y`. The classifier, the date and provider regexes, and the model prompt all run

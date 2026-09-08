@@ -43,8 +43,8 @@ CONFIG_PATH = os.path.join(HERE, "config.json")
 SEND_FIELDS = ("date", "title", "doc_type", "specialty", "provider",
                "facility", "summary")
 
-# Cloudflare sits in front of your-server.example.com and blocks requests
-# carrying urllib's default "Python-urllib/3.x" User-Agent with a 403 — which
+# If Cloudflare sits in front of the server, it blocks requests carrying
+# urllib's default "Python-urllib/3.x" User-Agent with a 403 — which
 # reads like an auth failure but happens before the request reaches Flask. Any
 # non-default UA is accepted.
 USER_AGENT = "clinic-triage/1.0"
