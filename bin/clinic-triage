@@ -30,6 +30,7 @@ clinic-triage — clinic notes from the Taildrop inbox into sardinetracker
   clinic-triage describe    describe new documents only (no collection)
   clinic-triage preview     show what would be filed; send nothing
   clinic-triage push        review each proposal and file the approved ones
+  clinic-triage event       record a visit/lab draw/scan that left no PDF
   clinic-triage status      list the queue
   clinic-triage roster      re-fetch the clinician list, then repair fields
   clinic-triage repair      recompute dates/providers without the model
@@ -55,6 +56,7 @@ cmd_check()    { cd "$PROJECT"; run ./triage.py --dry-run -v "$@"; }
 cmd_describe() { cd "$PROJECT"; run ./triage.py "$@"; }
 cmd_preview()  { cd "$PROJECT"; run ./push.py --dry-run "$@"; }
 cmd_push()     { cd "$PROJECT"; run ./push.py "$@"; }
+cmd_event()    { cd "$PROJECT"; run ./event.py "$@"; }
 cmd_status()   { cd "$PROJECT"; run ./triage.py --report "$@"; }
 cmd_repair()   { cd "$PROJECT"; run ./triage.py --reextract "$@"; }
 cmd_roster()   { cd "$PROJECT"; run ./triage.py --refresh-roster --reextract "$@"; }
@@ -123,6 +125,7 @@ case "${1-}" in
     describe)          shift; cmd_describe "$@" ;;
     preview)           shift; cmd_preview "$@" ;;
     push)              shift; cmd_push "$@" ;;
+    event)             shift; cmd_event "$@" ;;
     status)            shift; cmd_status "$@" ;;
     roster)            shift; cmd_roster "$@" ;;
     repair)            shift; cmd_repair "$@" ;;

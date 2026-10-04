@@ -267,6 +267,7 @@ convenience rather than something to reverse-engineer later.
 ```
 clinic-triage run     # collect from Taildrop, then describe what is new
 clinic-triage push    # review each proposal and file the approved ones
+clinic-triage event   # record a visit/lab draw/scan that left no PDF (event.py)
 ```
 
 Everything else — `get`, `check`, `describe`, `preview`, `status`, `roster`,

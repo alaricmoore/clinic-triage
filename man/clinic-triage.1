@@ -59,6 +59,16 @@ per document;
 opens the proposal in
 .BR $EDITOR .
 .TP
+.B event
+Record a clinical event that left no PDF (a visit, lab draw or scan).
+Asks for date, type, provider (from the roster) and notes, shows what it
+will send, and posts to
+.B /api/clinical/event
+only after a
+.BR y .
+.B \-\-dry\-run
+sends nothing.
+.TP
 .B status
 List what is sitting in the queue.
 .TP
